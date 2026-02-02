@@ -107,6 +107,10 @@ fi
 if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/user.reg" ]]; then
   SERIAL=$(grep -oE '"(serial|Serial)"="[0-9A-Fa-f]{32}"' "${PFX}/user.reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
 fi
+# Store serial for launcher fallback (launcher reads this if registry grep fails)
+if [[ -n "$SERIAL" ]]; then
+  echo "$SERIAL" > "${COMPAT_DATA_PATH}/mta_serial.txt"
+fi
 
 # --- Download ---
 installer_exe=
@@ -284,43 +288,79 @@ if [[ $SKIP_LAUNCHER -eq 0 ]]; then
 #!/bin/sh
 # Launch MTA using the GTA SA Proton prefix (12120)
 # Re-applies serial + allow_steam_client=0 before every launch (MTA/Wine can revert them on exit).
+# Verbose: set MTA_VERBOSE=1 to enable Proton + Wine logs to compatdata/mta-launch.log
 STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-$HOME/.local/share/Steam/steamapps/compatdata/12120}"
 PROTON="${PROTON:-$HOME/.local/share/Steam/steamapps/common/Proton 9.0 (Beta)/proton}"
 MTA_EXE="C:\\\\Program Files (x86)\\\\MTA San Andreas 1.6\\\\Multi Theft Auto.exe"
 export STEAM_COMPAT_DATA_PATH
+export PROTON_USE_WINED3D="${PROTON_USE_WINED3D:-1}"
+
+LOG_FILE="${STEAM_COMPAT_DATA_PATH}/mta-launch.log"
+if [ -n "${MTA_VERBOSE}" ]; then
+  export PROTON_LOG=1
+  export WINEDEBUG="${WINEDEBUG:-+err,+warn,+loaddll}"
+  : > "$LOG_FILE"
+  exec 1>>"$LOG_FILE" 2>&1
+  echo "=== MTA launch $(date -Iseconds) ==="
+fi
 
 PFX="${STEAM_COMPAT_DATA_PATH}/pfx"
 SERIAL=""
+SERIAL_FILE="${STEAM_COMPAT_DATA_PATH}/mta_serial.txt"
+
+if [ -f "$SERIAL_FILE" ]; then
+  read -r SERIAL < "$SERIAL_FILE" 2>/dev/null
+  SERIAL=$(echo "$SERIAL" | tr -d '\r\n' | grep -E '^[0-9A-Fa-f]{32}$' || true)
+fi
+if [ -z "$SERIAL" ]; then
+  for reg in "$PFX/user.reg" "$PFX/system.reg"; do
+    [ -f "$reg" ] || continue
+    SERIAL=$(grep -E '"(Serial|serial)"="[0-9A-Fa-f]{32}"' "$reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
+    [ -n "$SERIAL" ] && break
+  done
+fi
+
+CORECONFIG="$PFX/drive_c/Program Files (x86)/MTA San Andreas 1.6/MTA/config/coreconfig.xml"
+if [ -f "$CORECONFIG" ]; then
+  sed -i 's/<allow_steam_client>1<\/allow_steam_client>/<allow_steam_client>0<\/allow_steam_client>/' "$CORECONFIG"
+  grep -q '<debugfile>MTA' "$CORECONFIG" || sed -i 's|<debugfile></debugfile>|<debugfile>MTA\\\\logs\\\\debug.log</debugfile>|' "$CORECONFIG"
+fi
 
 for reg in "$PFX/user.reg" "$PFX/system.reg"; do
   [ -f "$reg" ] || continue
-  SERIAL=$(grep -E '"(Serial|serial)"="[0-9A-Fa-f]{32}"' "$reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
-  [ -n "$SERIAL" ] && break
+  sed -i '/\[Software\\\\Multi Theft Auto: San Andreas All\\\\1\.6\\\\Settings\\\\general\]/,/^\[/{
+    /"pending-browse-to-solution"=/d
+  }' "$reg"
+  sed -i '/\[Software\\\\Wow6432Node\\\\Multi Theft Auto: San Andreas All\\\\1\.6\\\\Settings\\\\general\]/,/^\[/{
+    /"pending-browse-to-solution"=/d
+  }' "$reg"
 done
 
+MTA_KEY='Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general'
+MTA_KEY_WOW='Software\\\\Wow6432Node\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general'
 if [ -n "$SERIAL" ]; then
-  CORECONFIG="$PFX/drive_c/Program Files (x86)/MTA San Andreas 1.6/MTA/config/coreconfig.xml"
-  if [ -f "$CORECONFIG" ]; then
-    sed -i 's/<allow_steam_client>1<\/allow_steam_client>/<allow_steam_client>0<\/allow_steam_client>/' "$CORECONFIG"
-  fi
-
-  USERREG="$PFX/user.reg"
-  if [ -f "$USERREG" ]; then
-    if grep -q 'Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general' "$USERREG"; then
-      sed -i "/\[Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general\]/,/^\[/{
+  if [ -f "$PFX/user.reg" ]; then
+    if grep -q "$MTA_KEY" "$PFX/user.reg"; then
+      sed -i "/\[$MTA_KEY\]/,/^\[/{
         s/\"Serial\"=\"[^\"]*\"/\"Serial\"=\"$SERIAL\"/;
         s/\"serial\"=\"[^\"]*\"/\"serial\"=\"$SERIAL\"/;
-      }" "$USERREG"
+      }" "$PFX/user.reg"
     else
-      if grep -q '\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]' "$USERREG"; then
+      if grep -q '\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]' "$PFX/user.reg"; then
         sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
-[Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general] 1770042330\\
+[$MTA_KEY] 1770042330\\
 #time=1dc944fc8d88a80\\
 \"Serial\"=\"$SERIAL\"\\
 \"serial\"=\"$SERIAL\"\\
-" "$USERREG"
+" "$PFX/user.reg"
       fi
     fi
+  fi
+  if [ -f "$PFX/system.reg" ] && grep -q "$MTA_KEY_WOW" "$PFX/system.reg"; then
+    sed -i "/\[$MTA_KEY_WOW\]/,/^\[/{
+      s/\"Serial\"=\"[^\"]*\"/\"Serial\"=\"$SERIAL\"/;
+      s/\"serial\"=\"[^\"]*\"/\"serial\"=\"$SERIAL\"/;
+    }" "$PFX/system.reg"
   fi
 fi
 
