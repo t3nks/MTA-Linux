@@ -30,7 +30,7 @@ PROTON="${STEAM_ROOT}/steamapps/common/${PROTON_NAME}/proton"
 # Current default from multitheftauto.com; fallback: download manually and use --installer
 MTA_INSTALLER_URL="${MTA_INSTALLER_URL:-https://multitheftauto.com/dl/mtasa-1.6.0-setup.exe}"
 DOWNLOAD_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
-SERIAL="${MTA_SERIAL:-F1E43E4BE2B477B3C5EE8D85334E6392}"
+# Serial: looked up from prefix only (no user input, no env var)
 
 # --- Flags ---
 DO_DOWNLOAD=1
@@ -78,6 +78,32 @@ fi
 
 export STEAM_COMPAT_DATA_PATH="$COMPAT_DATA_PATH"
 
+# --- Look up serial from prefix (no user input) ---
+SERIAL=
+# 1) MTA Settings\general "serial" (system.reg)
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/system.reg" ]]; then
+  SERIAL=$(grep -A 300 "Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general" "${PFX}/system.reg" 2>/dev/null | grep -E '"(serial|Serial)"=' | head -1 | sed -n 's/.*"\([^"]*\)"="\([^"]*\)".*/\2/p')
+fi
+# 2) MTA Settings (user.reg)
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/user.reg" ]]; then
+  SERIAL=$(grep -A 300 "Multi Theft Auto" "${PFX}/user.reg" 2>/dev/null | grep -E '"(serial|Serial)"=' | head -1 | sed -n 's/.*"\([^"]*\)"="\([^"]*\)".*/\2/p')
+fi
+# 3) Rockstar GTA San Andreas\1.00.00001 (system.reg) – from previous fix or game
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/system.reg" ]]; then
+  SERIAL=$(grep -A 5 "Rockstar Games\\\\GTA San Andreas\\\\1.00.00001" "${PFX}/system.reg" 2>/dev/null | grep -E '"(serial|Serial)"=' | head -1 | sed -n 's/.*"\([^"]*\)"="\([^"]*\)".*/\2/p')
+fi
+# 4) Rockstar GTA San Andreas (user.reg)
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/user.reg" ]]; then
+  SERIAL=$(grep -A 5 "Rockstar Games\\\\GTA San Andreas\\\\1.00.00001" "${PFX}/user.reg" 2>/dev/null | grep -E '"(serial|Serial)"=' | head -1 | sed -n 's/.*"\([^"]*\)"="\([^"]*\)".*/\2/p')
+fi
+# 5) Any 32-char hex serial in prefix (fallback)
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/system.reg" ]]; then
+  SERIAL=$(grep -oE '"(serial|Serial)"="[0-9A-Fa-f]{32}"' "${PFX}/system.reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
+fi
+if [[ -z "$SERIAL" ]] && [[ -f "${PFX}/user.reg" ]]; then
+  SERIAL=$(grep -oE '"(serial|Serial)"="[0-9A-Fa-f]{32}"' "${PFX}/user.reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
+fi
+
 # --- Download ---
 installer_exe=
 if [[ -n "$INSTALLER_PATH" ]]; then
@@ -122,7 +148,11 @@ fi
 
 # --- Registry fix (serial validation) ---
 if [[ $SKIP_REGISTRY -eq 0 ]]; then
-  echo "Applying GTA serial registry fix..."
+  if [[ -z "$SERIAL" ]]; then
+    echo "No serial found in prefix. Run GTA SA from Steam once, then run MTA once (so it writes a serial to the prefix), then re-run this script with --no-download."
+    exit 1
+  fi
+  echo "Applying GTA serial registry fix (serial looked up from prefix: ${SERIAL:0:8}...)..."
   regfile="$(mktemp --suffix=.reg)"
   trap "rm -f $regfile" EXIT
   cat > "$regfile" <<EOF
@@ -130,6 +160,7 @@ Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\Rockstar Games\\GTA San Andreas\\1.00.00001]
 "Serial"="$SERIAL"
+"serial"="$SERIAL"
 
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\Rockstar Games\\GTA San Andreas\\Installation]
 "exePath"="C:\\\\ProgramData\\\\MTA San Andreas All\\\\1.6\\\\GTA San Andreas\\\\gta_sa.exe"
@@ -137,8 +168,17 @@ Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Rockstar Games\\GTA San Andreas\\1.00.00001]
 "Serial"="$SERIAL"
+"serial"="$SERIAL"
 
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Rockstar Games\\GTA San Andreas\\Installation]
+"exePath"="C:\\\\ProgramData\\\\MTA San Andreas All\\\\1.6\\\\GTA San Andreas\\\\gta_sa.exe"
+"Installed"="1"
+
+[HKEY_CURRENT_USER\\Software\\Rockstar Games\\GTA San Andreas\\1.00.00001]
+"Serial"="$SERIAL"
+"serial"="$SERIAL"
+
+[HKEY_CURRENT_USER\\Software\\Rockstar Games\\GTA San Andreas\\Installation]
 "exePath"="C:\\\\ProgramData\\\\MTA San Andreas All\\\\1.6\\\\GTA San Andreas\\\\gta_sa.exe"
 "Installed"="1"
 EOF
@@ -156,6 +196,7 @@ EOF
 [Software\\Rockstar Games\\GTA San Andreas\\1.00.00001] 1770030390
 #time=1dc9433f9f716d0
 "Serial"="$SERIAL"
+"serial"="$SERIAL"
 
 [Software\\Rockstar Games\\GTA San Andreas\\Installation] 1770030390
 #time=1dc9433f9f716d1
@@ -165,6 +206,7 @@ EOF
 [Software\\Wow6432Node\\Rockstar Games\\GTA San Andreas\\1.00.00001] 1770030390
 #time=1dc9433f9f716d0
 "Serial"="$SERIAL"
+"serial"="$SERIAL"
 
 [Software\\Wow6432Node\\Rockstar Games\\GTA San Andreas\\Installation] 1770030390
 #time=1dc9433f9f716d1
@@ -172,6 +214,24 @@ EOF
 "Installed"="1"
 SYSREG
         echo "  Appended Rockstar keys to system.reg"
+      fi
+      # Also write to user.reg (HKCU) so game finds serial when reading current user
+      userreg="${PFX}/user.reg"
+      if [[ -f "$userreg" ]] && ! grep -q "Rockstar Games\\\\GTA San Andreas\\\\1.00.00001" "$userreg"; then
+        if grep -q "\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]" "$userreg"; then
+          sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
+[Software\\\\Rockstar Games\\\\GTA San Andreas\\\\1.00.00001] 1770030390\\
+#time=1dc9433f9f716d0\\
+\"Serial\"=\"$SERIAL\"\\
+\"serial\"=\"$SERIAL\"\\
+\\
+[Software\\\\Rockstar Games\\\\GTA San Andreas\\\\Installation] 1770030390\\
+#time=1dc9433f9f716d1\\
+\"exePath\"=\"C:\\\\\\\\ProgramData\\\\\\\\MTA San Andreas All\\\\\\\\1.6\\\\\\\\GTA San Andreas\\\\\\\\gta_sa.exe\"\\
+\"Installed\"=\"1\"\\
+" "$userreg" 2>/dev/null || true
+          echo "  Appended Rockstar keys to user.reg (HKCU)"
+        fi
       fi
     else
       echo "  system.reg not found; skip registry fix or run installer first."

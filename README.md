@@ -19,13 +19,14 @@ Run **Multi Theft Auto (MTA) San Andreas** using your existing **GTA San Andreas
 ## Quick start
 
 ```bash
-git clone <your-repo-url> GTA-SA-MTA && cd GTA-SA-MTA/SA
+git clone <your-repo-url> MTA-Linux && cd MTA-Linux
 chmod +x MTA-linux.sh
 ./MTA-linux.sh
 ```
 
 - The script will download the MTA installer, run it in the GTA SA prefix, apply the serial fix, and install the launcher.
 - When the installer finishes, press Enter. Then run MTA via `mta-san-andreas` or from your launcher (e.g. Wolfi).
+- **Serial:** The script **looks up** the serial from the prefix only (MTA or Rockstar registry). No user input and no env var.
 
 ## Usage
 
@@ -38,6 +39,14 @@ chmod +x MTA-linux.sh
 | `./MTA-linux.sh --skip-launcher` | Don’t install the launcher script or desktop entry |
 | `./MTA-linux.sh --help` | Show usage and options |
 
+## Serial (lookup only)
+
+The script **looks up** the serial from the prefix only. It does not hardcode a serial and does not ask the user to type or set one.
+
+1. It checks (in order): MTA Settings in `system.reg`, MTA Settings in `user.reg`, Rockstar GTA San Andreas in `system.reg`, Rockstar in `user.reg`, then any 32‑char hex serial in the prefix.
+2. If a serial is found, it is used for the Rockstar registry fix.
+3. If none is found, the script exits and tells you to run GTA SA from Steam once, then run MTA once, then re-run the script with `--no-download` so it can look up the serial on the next run.
+
 ## Configuration (environment)
 
 | Variable | Default | Description |
@@ -46,7 +55,6 @@ chmod +x MTA-linux.sh
 | `PROTON_NAME` | `Proton Hotfix` | Proton folder name under `steamapps/common/` |
 | `MTA_INSTALLER_URL` | multitheftauto.com 1.6 installer | Installer URL (change if the default 404s) |
 | `DOWNLOAD_DIR` | `~/Downloads` | Where to save the downloaded installer |
-| `MTA_SERIAL` | (script default) | Serial written to the registry (only change if you need a specific value) |
 
 Example with custom Steam path:
 
@@ -73,7 +81,8 @@ The script uses the official MTA 1.6 Windows installer URL. If that URL changes 
 - **"Proton not found"** – Set `PROTON_NAME` to the Proton you use for GTA SA (e.g. `Proton 9.0 (Beta)`).
 - **"GTA SA prefix not found"** – Install GTA San Andreas from Steam and launch it once with Proton.
 - **Download fails** – Use `--installer /path/to/MTA_SA_1.6.0_setup.exe` with a manually downloaded installer.
-- **Serial error still appears** – Re-run with `--no-download` so the registry fix runs again; ensure you’re using the same prefix (Steam app 12120).
+- **Serial error still appears** – Re-run with `--no-download` so the registry fix runs again; ensure you’re using the same prefix (Steam app 12120). The script writes the serial to both HKLM and HKCU.
+- **"No serial found in prefix"** – Run GTA SA from Steam once, then run MTA once (so the prefix gets a serial), then run the script again with `--no-download` so it can look it up.
 
 ## License
 
