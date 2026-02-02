@@ -8,6 +8,7 @@ Run **Multi Theft Auto (MTA) San Andreas** using your existing **GTA San Andreas
 2. **Install** – Runs the installer inside the GTA SA Proton prefix (Steam app ID `12120`).
 3. **Registry fix** – Adds the Rockstar Games serial keys so the game accepts the serial and no longer shows "Unable to validate serial".
 4. **Launcher** – Installs `mta-san-andreas` and a desktop entry so you can start MTA from Wolfi, your app menu, etc.
+5. **Steam shortcut** – Optionally adds MTA as a **non-Steam game** in Steam (pure shell; writes binary `shortcuts.vdf`). **Close Steam** before running so the shortcut is not overwritten.
 
 ## Requirements
 
@@ -37,6 +38,7 @@ chmod +x MTA-linux.sh
 | `./MTA-linux.sh --installer /path/to/MTA_SA_1.6.0_setup.exe` | Use a local installer (no download) |
 | `./MTA-linux.sh --skip-registry` | Don’t apply the serial registry fix |
 | `./MTA-linux.sh --skip-launcher` | Don’t install the launcher script or desktop entry |
+| `./MTA-linux.sh --skip-steam-shortcut` | Don't add MTA as a non-Steam game in Steam |
 | `./MTA-linux.sh --help` | Show usage and options |
 
 ## Serial (lookup only)
@@ -83,6 +85,7 @@ The script uses the official MTA 1.6 Windows installer URL. If that URL changes 
 - **Download fails** – Use `--installer /path/to/MTA_SA_1.6.0_setup.exe` with a manually downloaded installer.
 - **Serial error still appears** – Re-run with `--no-download` so the registry fix runs again; ensure you’re using the same prefix (Steam app 12120). The script writes the serial to both HKLM and HKCU.
 - **"No serial found in prefix"** – Run GTA SA from Steam once, then run MTA once (so the prefix gets a serial), then run the script again with `--no-download` so it can look it up.
+- **"There was a problem validating your serial" / "Serial verification failed"** – This happens **after** the client loads. The log shows **`[Error] Active steam process is unverified (pid: 65534)`**: MTA expects to run with a verified Steam process. If you launch MTA from our script (or a desktop shortcut) **without** Steam as the launcher, Steam is “unverified” and serial validation can fail. **Fix:** The script sets **`allow_steam_client=0`** in `MTA/config/coreconfig.xml` so MTA uses **registry serial only** (no Steam process check; under Proton there is no `steam.exe`). Re-run the script so it applies this change, then start MTA again (from Steam or the launcher).
 
 ## License
 

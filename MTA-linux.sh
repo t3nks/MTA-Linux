@@ -6,6 +6,7 @@
 #    Proton prefix (Steam app ID 12120).
 # 2. Applies the "unable to validate serial" registry fix.
 # 3. Installs the mta-san-andreas launcher script and desktop entry.
+# 4. Optionally adds MTA as a non-Steam game in Steam (close Steam first).
 #
 # Usage:
 #   ./MTA-linux.sh                    # Download, install, fix, launcher
@@ -14,7 +15,7 @@
 #   ./MTA-linux.sh --skip-registry   # Don't apply registry fix
 #   ./MTA-linux.sh --skip-launcher   # Don't install launcher/desktop entry
 #
-# Requires: Steam, GTA San Andreas (12120) installed, Proton (e.g. Proton Hotfix).
+# Requires: Steam, GTA San Andreas (12120) installed, Proton (e.g. Proton 9.0 (Beta)).
 # Optional: curl or wget (for download), protontricks (for install step).
 #
 
@@ -24,7 +25,7 @@ set -e
 STEAM_ROOT="${STEAM_ROOT:-$HOME/.local/share/Steam}"
 COMPAT_DATA_PATH="${STEAM_ROOT}/steamapps/compatdata/12120"
 PFX="${COMPAT_DATA_PATH}/pfx"
-PROTON_NAME="${PROTON_NAME:-Proton Hotfix}"
+PROTON_NAME="${PROTON_NAME:-Proton 9.0 (Beta)}"
 PROTON="${STEAM_ROOT}/steamapps/common/${PROTON_NAME}/proton"
 # Official MTA 1.6 Windows installer; set MTA_INSTALLER_URL if the default moves
 # Current default from multitheftauto.com; fallback: download manually and use --installer
@@ -37,28 +38,31 @@ DO_DOWNLOAD=1
 INSTALLER_PATH=
 SKIP_REGISTRY=0
 SKIP_LAUNCHER=0
+ADD_STEAM_SHORTCUT=1
 
 # --- Help ---
 usage() {
   sed -n '2,28p' "$0" | head -27
   echo ""
   echo "Options:"
-  echo "  --no-download       Skip download; only fix registry and install launcher"
-  echo "  --installer PATH    Use this local .exe as installer (no download)"
-  echo "  --skip-registry     Do not apply the GTA serial registry fix"
-  echo "  --skip-launcher     Do not install mta-san-andreas script or desktop entry"
-  echo "  --help              Show this help"
+  echo "  --no-download         Skip download; only fix registry and install launcher"
+  echo "  --installer PATH      Use this local .exe as installer (no download)"
+  echo "  --skip-registry       Do not apply the GTA serial registry fix"
+  echo "  --skip-launcher       Do not install mta-san-andreas script or desktop entry"
+  echo "  --skip-steam-shortcut Do not add MTA as a non-Steam game in Steam"
+  echo "  --help                Show this help"
   exit 0
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-download)   DO_DOWNLOAD=0; shift ;;
-    --installer)     INSTALLER_PATH="$2"; DO_DOWNLOAD=0; shift 2 ;;
-    --skip-registry) SKIP_REGISTRY=1; shift ;;
-    --skip-launcher) SKIP_LAUNCHER=1; shift ;;
-    --help)          usage ;;
-    *)               echo "Unknown option: $1"; usage ;;
+    --no-download)         DO_DOWNLOAD=0; shift ;;
+    --installer)            INSTALLER_PATH="$2"; DO_DOWNLOAD=0; shift 2 ;;
+    --skip-registry)        SKIP_REGISTRY=1; shift ;;
+    --skip-launcher)        SKIP_LAUNCHER=1; shift ;;
+    --skip-steam-shortcut)  ADD_STEAM_SHORTCUT=0; shift ;;
+    --help)                 usage ;;
+    *)                      echo "Unknown option: $1"; usage ;;
   esac
 done
 
@@ -158,6 +162,10 @@ if [[ $SKIP_REGISTRY -eq 0 ]]; then
   cat > "$regfile" <<EOF
 Windows Registry Editor Version 5.00
 
+[HKEY_CURRENT_USER\\Software\\Multi Theft Auto: San Andreas All\\1.6\\Settings\\general]
+"Serial"="$SERIAL"
+"serial"="$SERIAL"
+
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\Rockstar Games\\GTA San Andreas\\1.00.00001]
 "Serial"="$SERIAL"
 "serial"="$SERIAL"
@@ -173,6 +181,10 @@ Windows Registry Editor Version 5.00
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Rockstar Games\\GTA San Andreas\\Installation]
 "exePath"="C:\\\\ProgramData\\\\MTA San Andreas All\\\\1.6\\\\GTA San Andreas\\\\gta_sa.exe"
 "Installed"="1"
+
+[HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Multi Theft Auto: San Andreas All\\1.6\\Settings\\general]
+"Serial"="$SERIAL"
+"serial"="$SERIAL"
 
 [HKEY_CURRENT_USER\\Software\\Rockstar Games\\GTA San Andreas\\1.00.00001]
 "Serial"="$SERIAL"
@@ -215,11 +227,22 @@ EOF
 SYSREG
         echo "  Appended Rockstar keys to system.reg"
       fi
-      # Also write to user.reg (HKCU) so game finds serial when reading current user
+      # Also write to user.reg (HKCU) so MTA and game find serial when reading current user
       userreg="${PFX}/user.reg"
-      if [[ -f "$userreg" ]] && ! grep -q "Rockstar Games\\\\GTA San Andreas\\\\1.00.00001" "$userreg"; then
+      if [[ -f "$userreg" ]]; then
         if grep -q "\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]" "$userreg"; then
-          sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
+          if ! grep -q "Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general" "$userreg"; then
+            sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
+[Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general] 1770042330\\
+#time=1dc944fc8d88a80\\
+\"Serial\"=\"$SERIAL\"\\
+\"serial\"=\"$SERIAL\"\\
+\\
+" "$userreg" 2>/dev/null || true
+            echo "  Appended MTA Settings\\\\general (serial) to user.reg (HKCU)"
+          fi
+          if ! grep -q "Rockstar Games\\\\GTA San Andreas\\\\1.00.00001" "$userreg"; then
+            sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
 [Software\\\\Rockstar Games\\\\GTA San Andreas\\\\1.00.00001] 1770030390\\
 #time=1dc9433f9f716d0\\
 \"Serial\"=\"$SERIAL\"\\
@@ -229,8 +252,10 @@ SYSREG
 #time=1dc9433f9f716d1\\
 \"exePath\"=\"C:\\\\\\\\ProgramData\\\\\\\\MTA San Andreas All\\\\\\\\1.6\\\\\\\\GTA San Andreas\\\\\\\\gta_sa.exe\"\\
 \"Installed\"=\"1\"\\
+\\
 " "$userreg" 2>/dev/null || true
-          echo "  Appended Rockstar keys to user.reg (HKCU)"
+            echo "  Appended Rockstar keys to user.reg (HKCU)"
+          fi
         fi
       fi
     else
@@ -242,20 +267,67 @@ SYSREG
   echo "Registry fix done."
 fi
 
-# --- Launcher script ---
+# --- MTA coreconfig: disable Steam process check (no steam.exe in Proton) ---
+# With allow_steam_client=0, MTA uses registry serial only; avoids "Active steam process is unverified (pid: 65534)".
+MTA_CORECONFIG="${PFX}/drive_c/Program Files (x86)/MTA San Andreas 1.6/MTA/config/coreconfig.xml"
+if [[ -f "$MTA_CORECONFIG" ]]; then
+  if grep -q '<allow_steam_client>1</allow_steam_client>' "$MTA_CORECONFIG"; then
+    sed -i 's/<allow_steam_client>1<\/allow_steam_client>/<allow_steam_client>0<\/allow_steam_client>/' "$MTA_CORECONFIG"
+    echo "Set allow_steam_client=0 in MTA config (serial-only validation for Proton)."
+  fi
+fi
+
+# --- Launcher script (re-applies serial + allow_steam_client=0 before every launch) ---
 if [[ $SKIP_LAUNCHER -eq 0 ]]; then
   mkdir -p "$HOME/.local/bin"
-  cat > "$HOME/.local/bin/mta-san-andreas" <<LAUNCHER
+  cat > "$HOME/.local/bin/mta-san-andreas" <<'LAUNCHER_END'
 #!/bin/sh
 # Launch MTA using the GTA SA Proton prefix (12120)
-STEAM_COMPAT_DATA_PATH="\$HOME/.local/share/Steam/steamapps/compatdata/12120"
-PROTON="\$HOME/.local/share/Steam/steamapps/common/Proton Hotfix/proton"
+# Re-applies serial + allow_steam_client=0 before every launch (MTA/Wine can revert them on exit).
+STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH:-$HOME/.local/share/Steam/steamapps/compatdata/12120}"
+PROTON="${PROTON:-$HOME/.local/share/Steam/steamapps/common/Proton 9.0 (Beta)/proton}"
 MTA_EXE="C:\\\\Program Files (x86)\\\\MTA San Andreas 1.6\\\\Multi Theft Auto.exe"
 export STEAM_COMPAT_DATA_PATH
-exec "\$PROTON" runinprefix "\$MTA_EXE"
-LAUNCHER
+
+PFX="${STEAM_COMPAT_DATA_PATH}/pfx"
+SERIAL=""
+
+for reg in "$PFX/user.reg" "$PFX/system.reg"; do
+  [ -f "$reg" ] || continue
+  SERIAL=$(grep -E '"(Serial|serial)"="[0-9A-Fa-f]{32}"' "$reg" 2>/dev/null | head -1 | sed -n 's/.*"="\([^"]*\)".*/\1/p')
+  [ -n "$SERIAL" ] && break
+done
+
+if [ -n "$SERIAL" ]; then
+  CORECONFIG="$PFX/drive_c/Program Files (x86)/MTA San Andreas 1.6/MTA/config/coreconfig.xml"
+  if [ -f "$CORECONFIG" ]; then
+    sed -i 's/<allow_steam_client>1<\/allow_steam_client>/<allow_steam_client>0<\/allow_steam_client>/' "$CORECONFIG"
+  fi
+
+  USERREG="$PFX/user.reg"
+  if [ -f "$USERREG" ]; then
+    if grep -q 'Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general' "$USERREG"; then
+      sed -i "/\[Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general\]/,/^\[/{
+        s/\"Serial\"=\"[^\"]*\"/\"Serial\"=\"$SERIAL\"/;
+        s/\"serial\"=\"[^\"]*\"/\"serial\"=\"$SERIAL\"/;
+      }" "$USERREG"
+    else
+      if grep -q '\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]' "$USERREG"; then
+        sed -i "/\[Software\\\\Microsoft\\\\Internet Explorer\\\\Main\]/i\\
+[Software\\\\Multi Theft Auto: San Andreas All\\\\1.6\\\\Settings\\\\general] 1770042330\\
+#time=1dc944fc8d88a80\\
+\"Serial\"=\"$SERIAL\"\\
+\"serial\"=\"$SERIAL\"\\
+" "$USERREG"
+      fi
+    fi
+  fi
+fi
+
+exec "$PROTON" runinprefix "$MTA_EXE"
+LAUNCHER_END
   chmod +x "$HOME/.local/bin/mta-san-andreas"
-  echo "Installed: $HOME/.local/bin/mta-san-andreas"
+  echo "Installed: $HOME/.local/bin/mta-san-andreas (with pre-launch serial/config fix)"
 
   # Desktop entry
   mkdir -p "$HOME/.local/share/applications"
@@ -276,6 +348,84 @@ DESKTOP
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
   fi
   echo "Launcher and desktop entry installed. You can run MTA from Wolfi or: $HOME/.local/bin/mta-san-andreas"
+fi
+
+# --- Add MTA as non-Steam game (binary shortcuts.vdf) ---
+# Steam shortcuts.vdf is binary VDF: 0x00=child, 0x01=string, 0x02=int32, 0x08=end.
+# Close Steam before running so our write is not overwritten.
+if [[ $ADD_STEAM_SHORTCUT -eq 1 ]]; then
+  echo "Checking Steam shortcut (close Steam first so shortcuts.vdf is not overwritten)..."
+  MTA_LAUNCHER="${MTA_LAUNCHER:-$HOME/.local/bin/mta-san-andreas}"
+  MTA_STARTDIR="${MTA_STARTDIR:-$HOME}"
+  if [[ ! -x "$MTA_LAUNCHER" ]]; then
+    echo "Skipping Steam shortcut: launcher not found at $MTA_LAUNCHER (install launcher first, or set MTA_LAUNCHER)."
+  else
+    # Build one shortcut block (binary) to stdout: index (e.g. "0"), appname, exe path, startdir
+    build_shortcut_binary() {
+      local idx="$1" appname="$2" exe="$3" startdir="$4"
+      # Child block: 0x00 key 0x00 ... 0x08
+      printf '\x00%s\x00' "$idx"
+      printf '\x01%s\x00%s\x00' "AppName" "$appname"
+      printf '\x01%s\x00%s\x00' "exe" "$exe"
+      printf '\x01%s\x00%s\x00' "StartDir" "$startdir"
+      printf '\x01%s\x00\x00' "icon"
+      printf '\x01%s\x00\x00' "ShortcutPath"
+      printf '\x01%s\x00\x00' "LaunchOptions"
+      printf '\x02%s\x00' "IsHidden"; printf '\x00\x00\x00\x00'
+      printf '\x02%s\x00' "AllowDesktopConfig"; printf '\x01\x00\x00\x00'
+      printf '\x02%s\x00' "AllowOverlay"; printf '\x01\x00\x00\x00'
+      printf '\x02%s\x00' "openvr"; printf '\x00\x00\x00\x00'
+      printf '\x02%s\x00' "LastPlayTime"; printf '\x00\x00\x00\x00'
+      printf '\x00%s\x00\x08' "tags"
+      printf '\x08'
+    }
+    next_shortcut_index() {
+      local f="$1" hex match inner key idx max=0
+      [[ -s "$f" ]] || { echo 0; return; }
+      hex=$(xxd -p "$f" 2>/dev/null | tr -d '\n')
+      for match in $(echo "$hex" | grep -oE '00(3[0-9])+00'); do
+        [[ "$match" == "0073686f72746375747300" ]] && continue
+        inner="${match:2:${#match}-4}"
+        key=""
+        for ((i=0; i<${#inner}; i+=2)); do key+=$(printf "\\x${inner:i:2}"); done
+        idx=$((10#$key))
+        [[ $idx -ge $max ]] && max=$((idx+1))
+      done
+      echo $max
+    }
+    added=0
+    for shortvdf in "$STEAM_ROOT"/userdata/*/config/shortcuts.vdf; do
+      [[ -f "$shortvdf" ]] || continue
+      if strings "$shortvdf" 2>/dev/null | grep -q "MTA San Andreas"; then
+        echo "Steam shortcut already present: $shortvdf"
+        continue
+      fi
+      idx=$(next_shortcut_index "$shortvdf")
+      tmp=$(mktemp)
+      trap "rm -f $tmp" EXIT
+      if [[ ! -s "$shortvdf" ]]; then
+        printf '\x00%s\x00' "shortcuts" > "$tmp"
+        build_shortcut_binary "0" "MTA San Andreas" "$MTA_LAUNCHER" "$MTA_STARTDIR" >> "$tmp"
+        printf '\x08\x08' >> "$tmp"
+      else
+        size=$(wc -c < "$shortvdf")
+        dd if="$shortvdf" bs=1 count=$((size-2)) 2>/dev/null > "$tmp"
+        build_shortcut_binary "$idx" "MTA San Andreas" "$MTA_LAUNCHER" "$MTA_STARTDIR" >> "$tmp"
+        printf '\x08\x08' >> "$tmp"
+      fi
+      mv "$tmp" "$shortvdf"
+      rm -f "$tmp"
+      trap - EXIT
+      echo "Added MTA as non-Steam game: $shortvdf"
+      added=1
+    done
+    if [[ $added -eq 0 ]] && [[ ! -d "$STEAM_ROOT/userdata" ]] || ! ls "$STEAM_ROOT"/userdata/*/config/shortcuts.vdf 1>/dev/null 2>&1; then
+      echo "No Steam userdata config found; add MTA manually in Steam: Games -> Add a Non-Steam Game."
+    fi
+    if [[ $added -eq 1 ]]; then
+      echo "Launch MTA from Steam (Library) so Steam is the parent process and serial verification can succeed."
+    fi
+  fi
 fi
 
 echo ""
